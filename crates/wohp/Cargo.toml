@@ -1,0 +1,43 @@
+[package]
+name = "wohp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+default = []
+mock = ["dep:wohp-mock"]
+server = ["dep:axum", "dep:tokio", "dep:reqwest", "dep:serde_json", "dep:qrcode", "dep:wohp-eudi"]
+
+[dependencies]
+wohp-api.workspace = true
+wohp-mock = { workspace = true, optional = true }
+wohp-eudi = { workspace = true, optional = true }
+base64.workspace = true
+ring.workspace = true
+rusqlite.workspace = true
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+qrcode = { workspace = true, optional = true }
+
+[dev-dependencies]
+wohp-mock.workspace = true
+wohp-eudi = { workspace = true, features = ["fake-verifier"] }
+serde_json.workspace = true
+
+[[bin]]
+name = "wohp-mock"
+path = "src/bin/wohp-mock.rs"
+required-features = ["mock"]
+
+[[bin]]
+name = "wohp-server"
+path = "src/bin/wohp-server/main.rs"
+required-features = ["server"]
+
+[lints]
+workspace = true

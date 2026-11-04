@@ -1,0 +1,24 @@
+[package]
+name = "wohp-eudi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+wohp-api.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+serde_json.workspace = true
+unicode-normalization.workspace = true
+
+[features]
+default = []
+# Loopback fake verifier endpoint for tests of this crate and its consumers.
+fake-verifier = []
+
+[dev-dependencies]
+wohp-eudi = { path = ".", features = ["fake-verifier"] }
+
+[lints]
+workspace = true
