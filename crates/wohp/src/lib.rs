@@ -220,7 +220,7 @@ impl<P: IdentityProvider, C: Clock> Service<P, C> {
         if minimum_age.is_some_and(|floor| {
             !proof.age.is_some_and(|age| {
                 age.at_least >= floor
-                    && age.valid_until > now
+                    && store::age_expiry_day(age.valid_until) > now
                     && age.valid_until <= proof.valid_until
             })
         }) {
@@ -301,6 +301,18 @@ impl<P: IdentityProvider, C: Clock> Service<P, C> {
         client_id: &ClientId,
         profile_subject: &Subject,
     ) -> Result<Subject, Error> {
+        self.issue_client_subject(client_id, profile_subject)
+            .map(|(subject, _)| subject)
+    }
+
+    /// Same as [`Service::client_subject`], and tells whether this call issued
+    /// the subject. A client may learn only that a person is new to it, not
+    /// whether the person is known through another client.
+    pub fn issue_client_subject(
+        &mut self,
+        client_id: &ClientId,
+        profile_subject: &Subject,
+    ) -> Result<(Subject, bool), Error> {
         self.store.client_subject(client_id, profile_subject)
     }
 

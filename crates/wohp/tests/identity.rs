@@ -20,6 +20,8 @@ use wohp_mock::{MockIdentityProvider, Scenario};
 
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+const DAY: u64 = 86_400;
+
 struct Database {
     directory: PathBuf,
 }
@@ -630,7 +632,7 @@ fn evidence_expiry_requires_revalidation_without_identity_reset() {
     let provider = Arc::new(MockIdentityProvider::default());
     let mut service = open(&db.path(), Arc::clone(&provider), clock.clone(), None);
     let alice = enroll(&mut service, &provider, "alice");
-    clock.advance(3600);
+    clock.advance(2 * DAY);
     assert_eq!(
         service.status(&alice.subject).unwrap().status,
         IdentityStatus::RevalidationRequired
@@ -679,7 +681,7 @@ fn a_required_age_is_not_inferred_from_missing_or_negative_evidence() {
         service.status(&alice.subject).unwrap().age_at_least,
         Some(AgeThreshold::Eighteen)
     );
-    clock.advance(3600);
+    clock.advance(2 * DAY);
     let status = service.status(&alice.subject).unwrap();
     assert_eq!(status.age_at_least, None);
     assert_eq!(status.status, IdentityStatus::RevalidationRequired);
@@ -741,6 +743,7 @@ enum Mutation {
     FutureVerification,
     ExpiredAge,
     ShortAge,
+    SameDayAge,
 }
 impl IdentityProvider for IncorrectAdapter {
     fn descriptor(&self) -> ProviderDescriptor {
@@ -765,11 +768,57 @@ impl IdentityProvider for IncorrectAdapter {
                 Mutation::ExpiredEvidence => proof.valid_until = now,
                 Mutation::FutureVerification => proof.verified_at = now + 1,
                 Mutation::ExpiredAge => proof.age.as_mut().unwrap().valid_until = now,
-                Mutation::ShortAge => proof.age.as_mut().unwrap().valid_until = now + 1200,
+                Mutation::ShortAge => {
+                    proof.valid_until = now + 3 * DAY;
+                    proof.age.as_mut().unwrap().valid_until = now + 2 * DAY;
+                }
+                Mutation::SameDayAge => proof.age.as_mut().unwrap().valid_until = now + 1200,
             }
         }
         Ok(outcome)
     }
+}
+
+#[test]
+fn age_evidence_expiring_today_counts_as_expired() {
+    let provider = Arc::new(IncorrectAdapter {
+        inner: MockIdentityProvider::default(),
+        mutation: Mutation::SameDayAge,
+    });
+    let scenario = || Scenario::aged("sixteen", Some(AgeThreshold::Sixteen));
+
+    let required = Database::new();
+    let mut service = open(
+        &required.path(),
+        Arc::clone(&provider),
+        TestClock::new(),
+        Some(AgeThreshold::Sixteen),
+    );
+    let context = service
+        .begin_for_client(&idp(), IdentityFlow::Enrollment)
+        .unwrap();
+    let evidence = provider.inner.issue(&context, scenario()).unwrap();
+    assert_eq!(
+        service
+            .complete(&context.challenge_id, &evidence)
+            .unwrap_err(),
+        Error::AgeRequired
+    );
+    assert_eq!(required.humans(), 0);
+
+    let optional = Database::new();
+    let mut service = open(
+        &optional.path(),
+        Arc::clone(&provider),
+        TestClock::new(),
+        None,
+    );
+    let context = service.begin(IdentityFlow::Enrollment).unwrap();
+    let evidence = provider.inner.issue(&context, scenario()).unwrap();
+    let completion = service.complete(&context.challenge_id, &evidence).unwrap();
+    let status = service.status(&completion.subject).unwrap();
+    assert_eq!(status.age_at_least, None);
+    assert_eq!(status.age_valid_until, None);
 }
 
 #[test]
@@ -799,9 +848,10 @@ fn age_evidence_expiry_blocks_access_before_identity_evidence_expires() {
     let completion = service.complete(&context.challenge_id, &evidence).unwrap();
     let client_subject = service.client_subject(&idp(), &completion.subject).unwrap();
     let current = service.status_for_client(&idp(), &client_subject).unwrap();
-    assert_eq!(current.age_valid_until, Some(1_001_200));
+    // 1_000_000 + 2 days, rounded down to the UTC day.
+    assert_eq!(current.age_valid_until, Some(13 * DAY));
     assert_eq!(current.status, IdentityStatus::Valid);
-    clock.advance(1200);
+    clock.advance(13 * DAY - 1_000_000);
     assert_eq!(
         service
             .status_for_client(&idp(), &client_subject)

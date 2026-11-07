@@ -240,7 +240,6 @@ pub fn status_fields(status: &BindingStatus) -> Map<String, Value> {
         "authentication_epoch": status.authentication_epoch,
         "age_at_least": status.age_at_least.map(AgeThreshold::years),
         "age_valid_until": status.age_valid_until,
-        "valid_until": status.valid_until,
         "policy_version": status.policy_version,
         "evidence_class": evidence_class_name(status.evidence_class),
     });

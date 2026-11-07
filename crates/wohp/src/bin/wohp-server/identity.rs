@@ -178,15 +178,23 @@ pub fn accept_in_core(
     let outcome = pending.verify(presentation);
     let mut service = core.lock().map_err(|_| CoreError::Storage)?;
     let completion = service.finish_completion(pending, outcome)?;
-    let kind = match completion.kind {
-        CompletionKind::Created if flow == WalletFlow::Enrollment => "created",
-        CompletionKind::ExistingRequiresAuthentication if flow == WalletFlow::Enrollment => {
-            "existing"
+    let enrollment = match completion.kind {
+        CompletionKind::Created | CompletionKind::ExistingRequiresAuthentication
+            if flow == WalletFlow::Enrollment =>
+        {
+            true
         }
-        CompletionKind::Recovered if flow == WalletFlow::Recovery => "recovered",
+        CompletionKind::Recovered if flow == WalletFlow::Recovery => false,
         _ => return Err(CoreError::InvalidEvidence),
     };
-    let client_subject = service.client_subject(client, &completion.subject)?;
+    let (client_subject, issued) = service.issue_client_subject(client, &completion.subject)?;
+    // `existing` is relative to this client: enrollment through another client
+    // must not be visible here.
+    let kind = match (enrollment, issued) {
+        (false, _) => "recovered",
+        (true, true) => "created",
+        (true, false) => "existing",
+    };
     let status = service.status(&completion.subject)?;
     let age = status.age_at_least.zip(status.age_valid_until);
     Ok(Accepted {

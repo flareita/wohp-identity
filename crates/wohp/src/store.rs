@@ -74,6 +74,15 @@ pub(crate) fn class_name(class: EvidenceClass) -> &'static str {
     }
 }
 
+const SECONDS_PER_DAY: Timestamp = 86_400;
+
+/// Start of the UTC day of an age expiry, the only precision clients see: an
+/// exact verification time would let two clients recognise the same person.
+/// Evidence counts as expired from this value, so a returned date is never past.
+pub(crate) fn age_expiry_day(until: Timestamp) -> Timestamp {
+    until - until % SECONDS_PER_DAY
+}
+
 /// A stored age threshold column; anything else is a corrupt row.
 pub(crate) fn threshold(years: Option<u8>) -> Result<Option<AgeThreshold>, Error> {
     years
@@ -221,11 +230,12 @@ impl Store {
             .map_err(|_| Error::Storage)
     }
 
+    /// The pairwise subject, and whether this call issued it to this client.
     pub(crate) fn client_subject(
         &mut self,
         client_id: &ClientId,
         profile_subject: &Subject,
-    ) -> Result<Subject, Error> {
+    ) -> Result<(Subject, bool), Error> {
         let tx = sql(self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate))?;
@@ -244,6 +254,7 @@ impl Store {
                 |row| row.get(0),
             )
             .optional())?;
+        let issued = subject.is_none();
         let subject = match subject {
             Some(subject) => subject,
             None => {
@@ -256,7 +267,10 @@ impl Store {
             }
         };
         sql(tx.commit())?;
-        Subject::parse(&subject).map_err(|_| Error::Storage)
+        Ok((
+            Subject::parse(&subject).map_err(|_| Error::Storage)?,
+            issued,
+        ))
     }
 
     /// Reverse lookup of a pairwise client subject. Unknown clients, unknown
@@ -475,10 +489,11 @@ impl Store {
             |r| Ok((r.get::<_, bool>(0)?, r.get::<_, u64>(1)?, r.get::<_, u64>(2)?,
                  r.get::<_, u64>(3)?, r.get::<_, Option<u8>>(4)?, r.get::<_, Option<u64>>(5)?)),
         ).optional())?.ok_or(Error::SubjectNotFound)?;
-        let age =
-            threshold(row.4)?.filter(|_| row.5.is_some_and(|until| until > now) && now >= row.2);
+        let age_until = row.5.map(age_expiry_day);
+        let age = threshold(row.4)?
+            .filter(|_| age_until.is_some_and(|until| until > now) && now >= row.2);
         let valid_until = row.3.min(if minimum_age.is_some() {
-            row.5.unwrap_or(0)
+            age_until.unwrap_or(0)
         } else {
             row.3
         });
@@ -497,7 +512,7 @@ impl Store {
             policy_version: String::new(),
             authentication_epoch: row.1,
             age_at_least: age,
-            age_valid_until: row.5.filter(|_| age.is_some()),
+            age_valid_until: age_until.filter(|_| age.is_some()),
             checked_at: now,
             valid_until,
             evidence_class: EvidenceClass::DevelopmentOnly,

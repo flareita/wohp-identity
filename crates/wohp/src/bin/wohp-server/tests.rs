@@ -471,6 +471,7 @@ fn the_same_person_gets_one_profile_and_a_pairwise_subject_per_client() {
             (IDP_TOKEN, RETURN),
             (IDP_TOKEN, RETURN),
             (OTHER_TOKEN, OTHER_RETURN),
+            (OTHER_TOKEN, OTHER_RETURN),
         ] {
             let body = json!({"flow": "enroll", "return_url": return_url, "state": "s"});
             let (_, value) = journey(&test, &app, token, body, &pid("alice", 30)).await;
@@ -480,11 +481,37 @@ fn the_same_person_gets_one_profile_and_a_pairwise_subject_per_client() {
         assert_eq!(results[0]["kind"], "created");
         assert_eq!(results[1]["kind"], "existing");
         assert_eq!(results[0]["client_subject"], results[1]["client_subject"]);
-        assert_eq!(results[2]["kind"], "existing");
+        // First time at this client: another client's enrollment stays hidden.
+        assert_eq!(results[2]["kind"], "created");
         assert_ne!(results[2]["client_subject"], results[0]["client_subject"]);
+        assert_eq!(results[3]["kind"], "existing");
+        assert_eq!(results[3]["client_subject"], results[2]["client_subject"]);
         upstream.abort();
     });
     assert_eq!(test.humans(), 1);
+}
+
+#[test]
+fn clients_receive_no_date_finer_than_the_utc_day() {
+    let test = TestCore::new(false);
+    run(async {
+        let (port, _, upstream) = upstream(AUDIENCE).await;
+        let app = server(port, &test);
+        for (token, return_url) in [(IDP_TOKEN, RETURN), (OTHER_TOKEN, OTHER_RETURN)] {
+            let body = json!({"flow": "enroll", "return_url": return_url, "state": "s"});
+            let (_, value) = journey(&test, &app, token, body, &pid("alice", 30)).await;
+            let code = query(value["redirect"].as_str().unwrap())["code"].clone();
+            let redeemed = redeem(&app, token, &code).await.1;
+            let status = status_of(&app, token, &redeemed["client_subject"]).await.1;
+            for result in [&redeemed, &status] {
+                let until = result["age_valid_until"].as_u64().unwrap();
+                assert_eq!(until % 86_400, 0);
+                assert!(until > timestamp().unwrap());
+                assert!(result.get("valid_until").is_none());
+            }
+        }
+        upstream.abort();
+    });
 }
 
 #[test]

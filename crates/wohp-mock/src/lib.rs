@@ -14,6 +14,9 @@ use wohp_api::{
     VerifiedPerson,
 };
 
+/// Long enough for age evidence to survive rounding to the UTC day.
+const EVIDENCE_WINDOW_SECONDS: u64 = 2 * 86_400;
+
 #[derive(Clone, Debug)]
 pub enum Scenario {
     Person {
@@ -134,7 +137,7 @@ impl IdentityProvider for MockIdentityProvider {
         let person = CanonicalPerson::new("mock.canonical-person.v1", &reference)
             .map_err(|_| ProviderError::InvalidEvidence)?;
         let valid_until = now
-            .checked_add(3600)
+            .checked_add(EVIDENCE_WINDOW_SECONDS)
             .ok_or(ProviderError::InvalidEvidence)?;
         Ok(VerificationOutcome::Established(Box::new(VerifiedPerson {
             person,
